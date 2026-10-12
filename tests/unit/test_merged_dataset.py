@@ -245,3 +245,58 @@ def test_time_merged_map_style_dataset(time_length, frame_step):
         assert False, "Should have raised IndexError"
     except IndexError:
         pass
+
+
+@pytest.mark.parametrize(
+    "num_frames,chunk_size,time_length,frame_step",
+    [
+        (3287, 8, 1, 1),  # image, 3287 = 410 * 8 + 7: the partial chunk is kept
+        (80, 16, 1, 1),  # image, exact multiple of the chunk size
+        (87, 16, 4, 3),  # video, last chunk too short to hold a window by itself
+    ],
+)
+def test_time_merged_dataset_keeps_partial_last_chunk(
+    num_frames, chunk_size, time_length, frame_step
+):
+    start_date = "2025-01-01"
+    times = pd.date_range(start_date, periods=num_frames, freq="h")
+    loader = MockLoader(num_frames, 1, 0, 4, start_date)
+    dataset = TimeMergedDataset(
+        times=times,
+        time_loaders=[loader],
+        transform=temporal_stack,
+        time_length=time_length,
+        frame_step=frame_step,
+        chunk_size=chunk_size,
+        shuffle=False,
+        infinite=False,
+    )
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1)
+    starts = [int(sample["target"][0, 0, 0, 0].item()) for sample in dataloader]
+
+    frames_per_window = (time_length - 1) * frame_step + 1
+    # every window that fits is produced exactly once, including the last ones
+    assert starts == list(range(num_frames - frames_per_window + 1))
+
+
+@pytest.mark.parametrize("world_size", [2, 3])
+def test_time_merged_dataset_ranks_cover_all_times(world_size):
+    num_frames, chunk_size = 3287, 8
+    start_date = "2025-01-01"
+    times = pd.date_range(start_date, periods=num_frames, freq="h")
+    loader = MockLoader(num_frames, 1, 0, 4, start_date)
+    seen = []
+    for rank in range(world_size):
+        dataset = TimeMergedDataset(
+            times=times,
+            time_loaders=[loader],
+            transform=temporal_stack,
+            rank=rank,
+            world_size=world_size,
+            chunk_size=chunk_size,
+            shuffle=False,
+            infinite=False,
+        )
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=1)
+        seen += [int(s["target"][0, 0, 0, 0].item()) for s in dataloader]
+    assert sorted(seen) == list(range(num_frames))
