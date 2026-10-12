@@ -134,9 +134,6 @@ class TimeMergedDataset(torch.utils.data.IterableDataset):
 
         self._generator = None
 
-        max_valid_idx = len(times) - self.chunk_size
-        self.max_valid_chunk_idx = max_valid_idx // self.chunk_size
-
         self.overlap = frames_per_window - 1
 
     @property
@@ -193,12 +190,15 @@ class TimeMergedDataset(torch.utils.data.IterableDataset):
         # Shard chunks across the data workers
         chunk_idxs = _split(chunk_idxs, worker_id, num_workers, drop_extra=False)
 
+        frames_per_window = (self.time_length - 1) * self.frame_step + 1
         for chunk_idx in chunk_idxs:
-            if chunk_idx > self.max_valid_chunk_idx:
+            times_for_chunk = self._times_for_chunk(chunk_idx)
+            # The last chunk may be partial. Keep it (dropping it silently loses
+            # the final timestamps) and skip only if it cannot form one window.
+            if len(times_for_chunk) < frames_per_window:
                 continue
 
             arr = self._load_chunk(chunk_idx)
-            times_for_chunk = self._times_for_chunk(chunk_idx)
 
             max_window_start = (
                 len(times_for_chunk) - (self.time_length - 1) * self.frame_step
