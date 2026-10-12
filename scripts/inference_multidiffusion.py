@@ -186,6 +186,7 @@ def inference(arg_list=None, customized_dataset=None):
     if distill_inference:
         model = DistilledSuperResolutionModel.from_pretrained(
             state_path,
+            hpx_level=hpx_level,
             hpx_lr_level=args.level_lr,
             patch_size=args.patch_size,
             overlap_size=args.overlap_size,
@@ -197,6 +198,7 @@ def inference(arg_list=None, customized_dataset=None):
     else:
         model = SuperResolutionModel.from_pretrained(
             state_path,
+            hpx_level=hpx_level,
             hpx_lr_level=args.level_lr,
             patch_size=args.patch_size,
             overlap_size=args.overlap_size,
