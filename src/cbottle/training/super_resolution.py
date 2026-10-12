@@ -76,13 +76,17 @@ def load_checkpoint(path: str, *, network, optimizer, scheduler, map_location) -
     return step
 
 
-def save_checkpoint(path, *, model_config, network, optimizer, scheduler, step, loss):
+def save_checkpoint(
+    path, *, model_config, network, optimizer, scheduler, step, loss, batch_info=None
+):
     with cbottle.checkpointing.Checkpoint(path, "w") as checkpoint:
         if isinstance(network, torch.nn.parallel.DistributedDataParallel):
             checkpoint.write_model(network.module)
         else:
             checkpoint.write_model(network)
         checkpoint.write_model_config(model_config)
+        if batch_info is not None:
+            checkpoint.write_batch_info(batch_info)
 
         with checkpoint.open("loop_state.pth", "w") as f:
             torch.save(
@@ -261,9 +265,12 @@ def train(
     test_fast: bool = False,
     dataloader_num_workers: int = 3,
     bf16: bool = False,
+    tensorboard_dir: Optional[str] = None,
 ):
     """
     Args:
+        tensorboard_dir: where to write TensorBoard events (rank 0). Defaults to
+            ``<output_path>/tb``.
         test_fast: used for rapid testing. E.g. uses mocked data to avoid
             network I/O.
     """
@@ -274,6 +281,11 @@ def train(
     WORLD_RANK = cbottle_dist.get_rank()
 
     os.makedirs(output_path, exist_ok=True)
+    writer = None
+    if WORLD_RANK == 0:
+        from torch.utils.tensorboard import SummaryWriter
+
+        writer = SummaryWriter(tensorboard_dir or os.path.join(output_path, "tb"))
     training_sampler = None
     test_sampler = None
     # dataloader
@@ -453,6 +465,11 @@ def train(
                                 / WORLD_SIZE
                                 / test_batch_size
                             )
+                            writer.add_scalar("loss/train", train_loss_list[-1], step)
+                            writer.add_scalar("loss/val", float(val_loss_list[-1]), step)
+                            writer.add_scalar("grad_norm", float(grad_norm), step)
+                            writer.add_scalar("lr", optimizer.param_groups[0]["lr"], step)
+                            writer.flush()
                             pos = net.module.model.pos_embed.detach().clone()
                             for name, para in net.named_parameters():
                                 if "enc.128x128_conv.weight" in name:
@@ -540,6 +557,7 @@ def train(
                                 scheduler=scheduler,
                                 step=step,
                                 loss=train_loss_list,
+                                batch_info=getattr(training_dataset, "batch_info", None),
                             )
                             running_loss = 0.0
 
