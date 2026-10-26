@@ -187,3 +187,6 @@ pyrightconfig.json
 # ignore tensorboard files
 /tensorboard
 
+# ignore plots
+plots/
+
