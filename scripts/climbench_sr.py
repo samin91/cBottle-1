@@ -264,17 +264,28 @@ def infer(args, rest):
     )
 
     # The comparison with other models only makes sense on the same days: check
-    # that exactly one output was written per day of the split. (The writer
-    # appends to an existing 0.nc, so re-using an output folder also fails here.)
+    # that exactly one output was written per day of the split. Each rank wrote
+    # its own <rank>.nc. (The writer appends to an existing file, so re-using an
+    # output folder also fails here.)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()  # wait until every rank has written its file
+    if dist.get_rank() != 0:
+        return
+    import glob
+
     import netCDF4 as nc
 
     expected = len(factory(split="test"))
-    with nc.Dataset(os.path.join(args.output_path, "0.nc")) as ds:
-        written = len(ds["time"])
-    if written != expected:
+    times = []
+    for path in sorted(glob.glob(os.path.join(args.output_path, "*.nc"))):
+        with nc.Dataset(path) as ds:
+            times.extend(ds["time"][:].tolist())
+    written = len(times)
+    if written != expected or len(set(times)) != written:
         raise SystemExit(
-            f"wrote {written} time steps but the {args.split} split has {expected}"
-            f" (stride {args.stride}); use a fresh output folder"
+            f"wrote {written} time steps ({len(set(times))} distinct) but the "
+            f"{args.split} split has {expected} (stride {args.stride}); "
+            "use a fresh output folder"
         )
     print(f"wrote {written} time steps, as expected", flush=True)
 
