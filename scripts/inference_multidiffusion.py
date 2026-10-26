@@ -149,7 +149,8 @@ def inference(arg_list=None, customized_dataset=None):
         test_dataset = customized_dataset(
             split="test",
         )
-        tasks = None
+        # every rank handles its own strided share of the days (<rank>.nc)
+        tasks = np.r_[WORLD_RANK : len(test_dataset) : WORLD_SIZE]
     elif input_path:
         ds = xr.open_dataset(input_path)
         test_dataset = NetCDFWrapperV1(
